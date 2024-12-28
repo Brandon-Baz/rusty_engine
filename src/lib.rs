@@ -327,16 +327,13 @@ impl<'a> Parser<'a> {
     pub fn generate_js(&self, tokens: Vec<Token>) -> String {
         const REPLACEMENT_STR: &str = "rJ2KqXzxQg";
 
-        // TODO: Replace this ugly hack with an array that we would await at the end and .join()
-        // The problem is that this is a breaking change since '+=' doesn't work on arrays, we need
-        // .push()
-
-        let mut s = String::new();
-        s += "let __prs = [];\n";
-        write!(s, "let {} = '';\n", self.config.global_var).unwrap();
+        let mut parts = String::with_capacity(tokens.len() * 50);
+        parts.push_str("let __parts = [];\n");
+        parts.push_str(&format!("let {} = '';\n", self.config.global_var));
 
         let mut trim_left = &None;
         let mut prev_text = None;
+
         for token in tokens.iter() {
             match token {
                 Token::Text(t) => {
@@ -346,40 +343,35 @@ impl<'a> Parser<'a> {
                     if let Some(text) = prev_text {
                         let text = self.trim_whitespace(text, trim_left.as_ref(), true);
                         let text = self.trim_whitespace(text, c.opening_whitespace.as_ref(), false);
-                        let text = self.escape_text(text);
-                        write!(s, "{}+='{}';\n", self.config.global_var, text).unwrap();
+                        parts.push_str(&format!("__parts.push('{}');\n", self.escape_text(text)));
                     }
                     trim_left = &c.closing_whitespace;
                     prev_text = None;
 
                     match c.r#type {
                         CommandType::Interpolate => {
-                            write!(s, "__prs.push({});\n", c.content).unwrap();
-                            write!(s, "{}+='{}';\n", self.config.global_var, REPLACEMENT_STR)
-                                .unwrap();
+                            parts.push_str(&format!("__parts.push({});\n", c.content));
+                            parts.push_str(&format!("__parts.push('{}');\n", REPLACEMENT_STR));
                         }
-                        CommandType::Execution => write!(s, "{};\n", c.content).unwrap(),
+                        CommandType::Execution => parts.push_str(&format!("{};\n", c.content)),
                     }
                 }
             };
         }
+
         if let Some(text) = prev_text {
             let text = self.trim_whitespace(&text, trim_left.as_ref(), true);
-            let text = self.escape_text(text);
-            write!(s, "{}+='{}';\n", self.config.global_var, text).unwrap()
+            parts.push_str(&format!("__parts.push('{}');\n", self.escape_text(text)));
         }
 
-        s += "const __rst = await Promise.all(__prs);\n";
-        write!(
-            s,
-            "{} = {}.replace(/{}/g, () => __rst.shift());\n",
-            self.config.global_var, self.config.global_var, REPLACEMENT_STR
-        )
-        .unwrap();
-        write!(s, "return {};\n", self.config.global_var).unwrap();
-        s
+        parts.push_str("const __rst = await Promise.all(__parts);\n");
+        parts.push_str(&format!("{} = __rst.join('');\n", self.config.global_var));
+        parts.push_str(&format!("{} = {}.replace(/{}/g, () => __rst.shift());\n",
+            self.config.global_var, self.config.global_var, REPLACEMENT_STR));
+        parts.push_str(&format!("return {};\n", self.config.global_var));
+
+        parts
     }
-}
 
 #[wasm_bindgen]
 pub struct Renderer {
